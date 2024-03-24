@@ -1,0 +1,300 @@
+#!/bin/bash
+
+# Check if the current user is root (has UID 0)
+if [ "$EUID" -ne 0 ]; then
+  echo "This script must be run as root."
+  exit 1
+fi
+
+# Record the start time
+start_time=$(date +%Y-%m-%d\ %H:%M:%S)
+
+# Remove the logs folder, in case it was already existing before. Removing it would solve some issues with the code, and provide a whole restart for a second run of the script
+function rm_logs_if_exist() {
+	# Check if the "logs" directory exists
+	if [ -d "logs" ]; then
+		echo "[#] Removing the logs directory for more use of the script..."
+		sudo rm -r "logs"
+		sleep 1
+	fi
+}
+rm_logs_if_exist
+
+mkdir logs &>/dev/null # Make a log folder for all the different logs
+mkdir logs/program_logs &>/dev/null # Make a log folder for the installation logs of the programs
+
+# 1.2 Allow the user to specify the filename; check if the file exists – (5 Points)
+read -p "[*] Please enter the filename: " filename; sleep 1
+get_filename() {
+    if [ ! -f "$filename" ]; then
+        echo "Error: File not found."
+        exit 1
+    else
+        echo "[#] File '$filename' found. Continuing with the analysis..."
+    fi
+}
+get_filename
+
+function check_and_install_program() {
+    for x in bulk_extractor binwalk foremost strings exiftool; do
+		sleep 1
+        if [ -z "$(which $x)" ]; then
+            echo "[!] $x is not installed, installing.."
+            sleep 1
+            echo "[#] All installation logs are saved in program_logs folder"
+            LOG_FILE="logs/program_logs/$x.log.txt"  # Create log file for each package inside the log folder
+            sudo apt-get install -y $x > "$LOG_FILE" 2>&1  # Redirect both stdout and stderr to the log file
+        else
+            echo "[#] $x is installed, YAY :D"
+        fi
+    done
+    LOG_FILE="logs/program_logs/volatility.log.txt"
+    echo "[!] This might take a few seconds.."
+    if [ -z "$(sudo find / -name volatility_2.6_lin64_standalone 2>/dev/null)" ]; then
+		echo "[!] Volatility is not installed..Installing now.."
+		
+		# Store the current directory in a variable
+        current_dir=$(pwd)
+        
+		# Install volatility
+		wget http://downloads.volatilityfoundation.org/releases/2.6/volatility_2.6_lin64_standalone.zip &>/dev/null; unzip volatility_2.6_lin64_standalone.zip  > "$LOG_FILE" 2>&1
+		
+		# Return to the original directory
+        cd "$current_dir"     
+	else
+		echo "[#] Volatility is installed. YAY :D"
+	fi
+	echo "[*] All the download logs are saved manually in logs folder"
+}
+check_and_install_program
+
+function carvers() {
+		#1.4 Use different carvers to automatically extract data – (10 Points)
+		
+		# Store the current directory in a variable
+		current_dir=$(pwd)
+		
+		sudo mkdir logs/foremost &>/dev/null
+		sudo mkdir logs/binwalk &>/dev/null
+		sudo mkdir logs/strings &>/dev/null
+		sudo mkdir logs/bulk_extractor &>/dev/null
+		sudo mkdir logs/exiftool &>/dev/null
+		
+		echo "[!] Attempting to carve file..."
+		sleep 4
+		echo "."; sleep 1
+		echo "."; sleep 1
+		echo "."; sleep 2
+		
+		echo "[!] This might take a few seconds..."; sleep 2
+		
+		# Run foremost in the logs/foremost directory
+		cd logs/foremost
+		foremost "$current_dir/$filename" &>/dev/null
+		cd "$current_dir"
+		echo "[#] Foremost finished successfully! YAY :D"; sleep 1
+		
+		cd logs/binwalk; binwalk "$current_dir/$filename" > binwalk.txt 2>&1
+	    cd $current_dir
+	    echo "[#] Binwalk finished successfully! YAY :D"; sleep 1
+	    
+	    cd logs/strings; strings "$current_dir/$filename" > strings.txt 2>&1
+	    cd $current_dir
+	    echo "[#] Strings finished successfully! YAY :D"; sleep 1
+	    
+	    cd logs/bulk_extractor; bulk_extractor "$current_dir/$filename" -o bulk_extractor &>/dev/null
+	    cd $current_dir
+	    echo "[#] Bulk_extractor finished successfully! YAY :D"
+	    
+		cd logs/exiftool; exiftool "$current_dir/$filename" > exiftool.output.txt 2>&1
+	    cd $current_dir
+	    echo "[#] Exiftool finished successfully! YAY :D"; sleep 1
+	    
+	    echo "[*] All the carving logs are saved manually in logs folder"; sleep 1
+}
+carvers
+
+function network_extracting() {
+	
+	# 1.6 Attempt to extract network traffic; if found, display to the user the location and size – (5 Points)
+	
+	# Store the current directory in a variable
+	current_dir=$(pwd)	
+	
+	cd "$current_dir"/logs/bulk_extractor/bulk_extractor
+	
+	# Process bulk_extractor output files
+	echo "[#] Processing bulk_extractor output files..."; sleep 1
+	
+	sleep 4
+	echo "."; sleep 1
+	echo "."; sleep 1
+	echo "."; sleep 2
+	
+	echo "[#] Attempting to display the location and size of network related files..."; sleep 1
+	network_related_files=("alerts.txt" "ccn_track2.txt" "domain.txt" "email.txt" "ether.txt" "httplogs.txt")
+
+	for file in "${network_related_files[@]}"; do
+		filepath="$current_dir/logs/bulk_extractor/bulk_extractor/$file"
+		sleep 1
+		
+		# Check if the file is non-empty (has size greater than zero)
+		if [ -s "$filepath" ]; then
+			# Display the size and location of the file
+			size=$(du -h "$filepath" | awk '{print $1}')
+			echo "[#] File: $file, Size: $size, Location: $filepath"
+		fi
+	done
+	cd "$current_dir"
+}
+network_extracting
+
+function strings_search() {
+	
+	#1.7 Check for human-readable (exe files, passwords, usernames, etc.) – (10 Points)
+	
+	# Store the current directory in a variable
+	current_dir=$(pwd)
+	cd "$current_dir"/logs/strings 
+	
+	echo "[!] Searching for users/passwords..."
+	
+	sleep 4
+	echo "."; sleep 1
+	echo "."; sleep 1
+	echo "."; sleep 2
+	
+	# Search for passwords
+	egrep -i 'password|pass|pwd|authentication|secret|passwd' "$current_dir"/logs/strings/* > pass.list.txt 2>&1
+
+	# Search for usernames
+	egrep -i 'username|user|login|uname|userid' "$current_dir"/logs/strings/* > user.list.txt 2>&1
+	
+	egrep -i '\.exe|\.dll|\.bat|\.cmd' "$current_dir"/logs/strings/* > file.extensions.list.txt 2>&1
+	
+	echo "[*] All the passwords&users that were found, are saved in $current_dir/logs/strings folder"; sleep 1
+	
+	cd "$current_dir"
+}
+strings_search
+
+function volatility_check() {
+	
+	# 2.1 Check if the file can be analyzed in Volatility; if yes, run Volatility – (5 Points)
+	
+	# Store the current directory in a variable
+	current_dir=$(pwd)
+	
+	cd volatility_2.6_lin64_standalone
+	
+	# Check if volatility gives a profile from imageinfo command, if it does then the file given is an image, if not then it's not. 
+	# Save it into a file for later investigation
+	
+	./volatility_2.6_lin64_standalone -f "$current_dir/$filename" imageinfo > imageinfo.vol.txt 2>&1
+	
+	if [ ! -n "$(cat imageinfo.vol.txt | grep -i "no profile")" ]; then
+		echo "[#] Volatility can run! Also, profile exists! Continuing..."; sleep 1
+	else
+		echo "[!] No profile found, therefore this is not an image file, exiting..."
+		exit 1
+	fi
+
+	
+	cd "$current_dir"
+}
+volatility_check
+
+# 2.2 Find the memory profile and save it into a variable – (5 Points)
+current_dir=$(pwd)
+vol_profile=$(cat "$current_dir"/volatility_2.6_lin64_standalone/imageinfo.vol.txt | grep -i "suggest" | awk '{print $4}' | sed 's/,$//')
+
+function vol_proccess_conn_reg() {
+	# 2.3 Display the running processes – (10 Points)
+	current_dir=$(pwd)
+	
+	sudo mkdir logs/processes_volatility &>/dev/null # make directory for all the running proccesses
+	sudo mkdir logs/connections_volatility &>/dev/null # make directory for all the network connections 
+	sudo mkdir logs/registry_volatility &>/dev/null # make directory for all the registry information 
+	
+	cd volatility_2.6_lin64_standalone
+	
+	echo "[!] Displaying volatility running proccesses..."
+	
+	./volatility_2.6_lin64_standalone -f "$current_dir/$filename" --profile="$vol_profile" pslist > "$current_dir"/logs/processes_volatility/pslist.txt 2>&1
+	./volatility_2.6_lin64_standalone -f "$current_dir/$filename" --profile="$vol_profile" pslist
+	
+	./volatility_2.6_lin64_standalone -f "$current_dir/$filename" --profile="$vol_profile" pstree > "$current_dir"/logs/processes_volatility/pstree.txt 2>&1
+	./volatility_2.6_lin64_standalone -f "$current_dir/$filename" --profile="$vol_profile" pstree 
+	
+	./volatility_2.6_lin64_standalone -f "$current_dir/$filename" --profile="$vol_profile" psscan > "$current_dir"/logs/processes_volatility/psscan.txt 2>&1
+	./volatility_2.6_lin64_standalone -f "$current_dir/$filename" --profile="$vol_profile" psscan
+	
+	./volatility_2.6_lin64_standalone -f "$current_dir/$filename" --profile="$vol_profile" psdispscan > "$current_dir"/logs/processes_volatility/psdispscan.txt 2>&1
+	./volatility_2.6_lin64_standalone -f "$current_dir/$filename" --profile="$vol_profile" psdispscan
+	
+	# 2.4 Display network connections – (5 Points)
+	
+	echo "[!] Displaying volatility network connections..."
+	
+	./volatility_2.6_lin64_standalone -f "$current_dir/$filename" --profile="$vol_profile" connections > "$current_dir"/logs/connections_volatility/connections.txt 2>&1
+	./volatility_2.6_lin64_standalone -f "$current_dir/$filename" --profile="$vol_profile" connections
+	
+	./volatility_2.6_lin64_standalone -f "$current_dir/$filename" --profile="$vol_profile" connscan > "$current_dir"/logs/connections_volatility/connscan.txt 2>&1
+	./volatility_2.6_lin64_standalone -f "$current_dir/$filename" --profile="$vol_profile" connscan
+	
+	./volatility_2.6_lin64_standalone -f "$current_dir/$filename" --profile="$vol_profile" sockets > "$current_dir"/logs/connections_volatility/sockets.txt 2>&1
+	./volatility_2.6_lin64_standalone -f "$current_dir/$filename" --profile="$vol_profile" sockets
+	
+	./volatility_2.6_lin64_standalone -f "$current_dir/$filename" --profile="$vol_profile" sockscan > "$current_dir"/logs/connections_volatility/sockscan.txt 2>&1
+	./volatility_2.6_lin64_standalone -f "$current_dir/$filename" --profile="$vol_profile" sockscan
+	
+	./volatility_2.6_lin64_standalone -f "$current_dir/$filename" --profile="$vol_profile" netscan > "$current_dir"/logs/connections_volatility/netscan.txt 2>&1
+	./volatility_2.6_lin64_standalone -f "$current_dir/$filename" --profile="$vol_profile" netscan
+	
+	# 2.5 Attempt to extract registry information – (10 Points)
+	
+	echo "[!] Extracting volatility registry information..."
+	
+	./volatility_2.6_lin64_standalone -f "$current_dir/$filename" --profile="$vol_profile" hivelist > "$current_dir"/logs/registry_volatility/hivelist.txt 2>&1
+	./volatility_2.6_lin64_standalone -f "$current_dir/$filename" --profile="$vol_profile" hivelist
+	
+	sudo mkdir "$current_dir"/logs/registry_volatility/registry_dump &>/dev/null # make directory for all the registry information
+	
+	./volatility_2.6_lin64_standalone -f "$current_dir/$filename" --profile="$vol_profile" dumpregistry --dump-dir="$current_dir"/logs/registry_volatility/registry_dump 2>&1
+	
+	cd "$current_dir"
+}
+vol_proccess_conn_reg
+
+# Record the end time
+end_time=$(date +%Y-%m-%d\ %H:%M:%S)
+
+# Calculate the duration of the analysis
+analysis_duration=$(($(date -d "$end_time" +%s) - $(date -d "$start_time" +%s)))
+
+# Count the number of files found (modify this based on your actual findings)
+number_of_files=$(find "$current_dir/logs" -type f | wc -l)
+
+
+# Display general statistics
+echo "Analysis Start Time: $start_time"
+echo "Analysis End Time: $end_time"
+echo "Analysis Duration: $analysis_duration seconds"
+echo "Number of Found Files: $number_of_files"
+
+# Save the statistics to a report file
+echo "[!] Analysis Start Time: $start_time" > "$current_dir/analysis_report.txt"
+echo "[!] Analysis End Time: $end_time" >> "$current_dir/analysis_report.txt"
+echo "[!] Analysis Duration: $analysis_duration seconds" >> "$current_dir/analysis_report.txt"
+echo "[!] Number of Found Files: $number_of_files" >> "$current_dir/analysis_report.txt"
+
+# Zip the extracted files, logs, and report
+zip -r "$current_dir/analysis_results.zip" "$current_dir/logs" "$current_dir/analysis_report.txt" &>/dev/null
+
+sleep 4
+		echo "."; sleep 1
+		echo "."; sleep 1
+		echo "."; sleep 2
+
+# Display a message indicating successful completion
+echo "[!!!] Analysis results and report have been successfully zipped. Zip file: $current_dir/analysis_results.zip"
